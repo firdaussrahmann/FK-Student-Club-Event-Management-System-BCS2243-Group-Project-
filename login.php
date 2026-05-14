@@ -41,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } elseif ($user['userRole'] === 'Committee') {
                 header("Location: committee_dashboard.php");
             } else {
-                header("Location: student_home.php");
+                header("Location: student_dashboard.php");
             }
             exit();
         } else {
