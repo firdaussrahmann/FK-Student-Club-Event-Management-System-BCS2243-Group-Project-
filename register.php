@@ -3,14 +3,18 @@
 session_start();
 require_once 'db_connect.php';
 
-// Optional: Ensure only Admins can access this page
-// if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'Administrator') {
-//     header("Location: login.php");
-//     exit();
-// }
+// Security Check: Only Administrators can register new users
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Administrator') {
+    header("Location: login.php");
+    exit();
+}
 
 $message = '';
 $messageType = '';
+
+// Fetch all available clubs for the dropdown
+$clubs_stmt = $pdo->query("SELECT Club_ID, clubName FROM club WHERE clubStatus = 'Active'");
+$clubs = $clubs_stmt->fetchAll();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $student_id = trim($_POST['student_id']);
@@ -55,6 +59,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $admin_stmt = $pdo->prepare($admin_sql);
                     $admin_stmt->execute([$new_user_id, $student_id]);
                 } else {
+                    // Handle Committee position and Club Membership
+                    if ($role === 'Committee' && isset($_POST['committee_position']) && isset($_POST['club_id'])) {
+                        $position = $_POST['committee_position'];
+                        $club_id = $_POST['club_id'];
+                        
+                        // Update user role with position
+                        $update_role_sql = "UPDATE user SET userRole = ? WHERE User_ID = ?";
+                        $pdo->prepare($update_role_sql)->execute(["Committee ($position)", $new_user_id]);
+                        
+                        // Create initial Club Membership
+                        $membership_sql = "INSERT INTO club_membership (joinDate, membershipStatus, membershipRole, User_ID, Club_ID) VALUES (CURDATE(), 'Active', ?, ?, ?)";
+                        $pdo->prepare($membership_sql)->execute([$position, $new_user_id, $club_id]);
+                    }
+
                     // Default to student for Committee and Student roles
                     $student_sql = "INSERT INTO student (User_ID, studentID, totalPoints) VALUES (?, ?, 0)";
                     $student_stmt = $pdo->prepare($student_sql);
@@ -131,14 +149,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <label for="password" class="form-label">Temporary Password</label>
                                 <input type="password" class="form-control" id="password" name="password" required>
                             </div>
-                            <div class="mb-4">
+                            <div class="mb-3">
                                 <label for="role" class="form-label">User Role</label>
-                                <select class="form-select" id="role" name="role" required>
+                                <select class="form-select" id="role" name="role" required onchange="toggleCommitteeRole()">
                                     <option value="" disabled selected>Select a role...</option>
                                     <option value="Administrator">Administrator</option>
                                     <option value="Committee">Committee Member</option>
                                     <option value="Student">Student</option>
                                 </select>
+                            </div>
+                            <div class="mb-3" id="committeeRoleDiv" style="display:none;">
+                                <div class="mb-3">
+                                    <label class="form-label">Committee Position</label>
+                                    <select name="committee_position" class="form-select">
+                                        <option value="President">President</option>
+                                        <option value="Secretary">Secretary</option>
+                                        <option value="Treasurer">Treasurer</option>
+                                        <option value="Committee Member">Committee Member</option>
+                                    </select>
+                                </div>
+                                <div class="mb-0">
+                                    <label class="form-label">Assign to Club</label>
+                                    <select name="club_id" class="form-select">
+                                        <option value="" disabled selected>Select a club...</option>
+                                        <?php foreach ($clubs as $c): ?>
+                                            <option value="<?= $c['Club_ID'] ?>"><?= htmlspecialchars($c['clubName']) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
                             </div>
                             <button type="submit" class="btn btn-success w-100 fw-bold">Register User</button>
                         </form>
@@ -149,6 +187,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </div>
 
+    <script>
+        function toggleCommitteeRole() {
+            var role = document.getElementById('role').value;
+            var div = document.getElementById('committeeRoleDiv');
+            if (role === 'Committee') {
+                div.style.display = 'block';
+            } else {
+                div.style.display = 'none';
+            }
+        }
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 

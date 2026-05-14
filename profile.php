@@ -80,6 +80,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// 3. Fetch Club Memberships
+$membership_sql = "SELECT m.*, c.clubName 
+                   FROM club_membership m 
+                   JOIN club c ON m.Club_ID = c.Club_ID 
+                   WHERE m.User_ID = ? AND m.membershipStatus = 'Active'";
+$m_stmt = $pdo->prepare($membership_sql);
+$m_stmt->execute([$user_id]);
+$memberships = $m_stmt->fetchAll();
+
 $display_id = ($user['userRole'] === 'Administrator') ? $user['staffID'] : $user['studentID'];
 ?>
 
@@ -155,6 +164,26 @@ $display_id = ($user['userRole'] === 'Administrator') ? $user['staffID'] : $user
                             <div class="mb-4">
                                 <label class="form-label">New Password (leave blank to keep current)</label>
                                 <input type="password" name="new_password" class="form-control" placeholder="Enter new password">
+                            </div>
+
+                            <!-- Club Membership Section -->
+                            <div class="mb-4">
+                                <label class="form-label fw-bold border-bottom w-100 pb-1">Club Memberships</label>
+                                <?php if (count($memberships) > 0): ?>
+                                    <ul class="list-group list-group-flush">
+                                        <?php foreach ($memberships as $m): ?>
+                                            <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                                                <div>
+                                                    <span class="fw-bold"><?= htmlspecialchars($m['clubName']) ?></span>
+                                                    <div class="small text-muted">Role: <?= htmlspecialchars($m['membershipRole'] ?? 'Member') ?></div>
+                                                </div>
+                                                <span class="badge bg-success rounded-pill">Joined <?= date('M Y', strtotime($m['joinDate'])) ?></span>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                <?php else: ?>
+                                    <p class="small text-muted mb-0">No active club memberships found.</p>
+                                <?php endif; ?>
                             </div>
 
                             <div class="d-grid gap-2">
