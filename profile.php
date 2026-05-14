@@ -12,67 +12,56 @@ $user_id = $_SESSION['user_id'];
 $message = '';
 $messageType = '';
 
-// 1. Fetch current user data (including ID from subtype tables)
-$sql = "SELECT u.*, s.studentID, a.staffID 
-        FROM user u 
-        LEFT JOIN student s ON u.User_ID = s.User_ID 
-        LEFT JOIN admin a ON u.User_ID = a.User_ID 
-        WHERE u.User_ID = ?";
-$stmt = $pdo->prepare($sql);
+// 1. Fetch current user data
+$stmt = $pdo->prepare("SELECT u.*, s.studentID, a.staffID FROM user u 
+                       LEFT JOIN student s ON u.User_ID = s.User_ID 
+                       LEFT JOIN admin a ON u.User_ID = a.User_ID 
+                       WHERE u.User_ID = ?");
 $stmt->execute([$user_id]);
 $user = $stmt->fetch();
 
-// 2. Handle Form Submission
+// 2. Handle Profile Update
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['userName']);
-    $email = trim($_POST['userEmail']);
-    $phone = trim($_POST['userPhoneNumber']);
+    $email = trim($_POST['email']);
+    $name = trim($_POST['name']);
     $new_password = $_POST['new_password'];
-    
+
     try {
         $pdo->beginTransaction();
-        
+
+        // Update user table
+        if (!empty($new_password)) {
+            $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
+            $update_sql = "UPDATE user SET userEmail = ?, userName = ?, userPassword = ? WHERE User_ID = ?";
+            $pdo->prepare($update_sql)->execute([$email, $name, $hashed_password, $user_id]);
+        } else {
+            $update_sql = "UPDATE user SET userEmail = ?, userName = ? WHERE User_ID = ?";
+            $pdo->prepare($update_sql)->execute([$email, $name, $user_id]);
+        }
+
         // Handle Profile Picture Upload
-        $profile_pic = $user['userProfilePicture'];
         if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] === 0) {
-            $allowed = ['jpg', 'jpeg', 'png', 'gif'];
-            $filename = $_FILES['profile_pic']['name'];
-            $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-            
-            if (in_array($ext, $allowed)) {
-                $new_filename = "profile_" . $user_id . "_" . time() . "." . $ext;
-                $target = "uploads/" . $new_filename;
-                
-                if (move_uploaded_file($_FILES['profile_pic']['tmp_name'], $target)) {
-                    $profile_pic = $new_filename;
-                }
+            $upload_dir = 'uploads/';
+            if (!is_dir($upload_dir))
+                mkdir($upload_dir, 0777, true);
+
+            $file_ext = pathinfo($_FILES['profile_pic']['name'], PATHINFO_EXTENSION);
+            $file_name = "profile_" . $user_id . "_" . time() . "." . $file_ext;
+            $target_path = $upload_dir . $file_name;
+
+            if (move_uploaded_file($_FILES['profile_pic']['tmp_name'], $target_path)) {
+                $pdo->prepare("UPDATE user SET userProfilePic = ? WHERE User_ID = ?")->execute([$target_path, $user_id]);
             }
         }
 
-        // Update Base Information
-        $update_sql = "UPDATE user SET userName = ?, userEmail = ?, userPhoneNumber = ?, userProfilePicture = ? WHERE User_ID = ?";
-        $update_params = [$name, $email, $phone, $profile_pic, $user_id];
-        $update_stmt = $pdo->prepare($update_sql);
-        $update_stmt->execute($update_params);
-
-        // Update Password if provided
-        if (!empty($new_password)) {
-            $hashed = password_hash($new_password, PASSWORD_DEFAULT);
-            $pw_sql = "UPDATE user SET userPassword = ? WHERE User_ID = ?";
-            $pdo->prepare($pw_sql)->execute([$hashed, $user_id]);
-        }
-
         $pdo->commit();
-        
-        // Refresh local data
-        $_SESSION['name'] = $name;
         $message = "Profile updated successfully!";
         $messageType = "success";
-        
-        // Re-fetch user data to refresh the page
+
+        // Refresh local data
         $stmt->execute([$user_id]);
         $user = $stmt->fetch();
-        
+
     } catch (Exception $e) {
         $pdo->rollBack();
         $message = "Error updating profile: " . $e->getMessage();
@@ -91,111 +80,117 @@ $memberships = $m_stmt->fetchAll();
 
 $display_id = ($user['userRole'] === 'Administrator') ? $user['staffID'] : $user['studentID'];
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Profile - FK System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        .profile-img { width: 150px; height: 150px; object-fit: cover; border-radius: 50%; }
-    </style>
 </head>
-<body class="bg-light">
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container">
-            <a class="navbar-brand" href="#">FK System</a>
-            <div class="navbar-nav ms-auto">
-                <a class="nav-link" href="javascript:history.back()">Back to Dashboard</a>
-            </div>
-        </div>
-    </nav>
 
-    <div class="container mt-5 mb-5">
-        <div class="row justify-content-center">
-            <div class="col-md-8">
-                <div class="card shadow border-0">
-                    <div class="card-header bg-white py-3">
-                        <h5 class="mb-0 fw-bold">Manage Profile</h5>
-                    </div>
-                    <div class="card-body p-4">
-                        <?php if ($message): ?>
-                            <div class="alert alert-<?= $messageType ?>"><?= $message ?></div>
-                        <?php endif; ?>
+<body>
+    <div id="wrapper">
+        <?php include 'sidebar.php'; ?>
 
-                        <form action="profile.php" method="POST" enctype="multipart/form-data">
-                            <div class="text-center mb-4">
-                                <img src="<?= $user['userProfilePicture'] ? 'uploads/'.$user['userProfilePicture'] : 'https://via.placeholder.com/150' ?>" 
-                                     class="profile-img mb-3 border shadow-sm" alt="Profile Picture">
-                                <div>
-                                    <label for="profile_pic" class="btn btn-sm btn-outline-secondary">Change Photo</label>
-                                    <input type="file" id="profile_pic" name="profile_pic" class="d-none" accept="image/*">
-                                </div>
+        <div id="content">
+            <?php include 'topbar.php'; ?>
+            <div class="container-fluid">
+                <div class="row justify-content-center">
+                    <div class="col-lg-8">
+                        <div class="card shadow-sm border-0 mt-4">
+                            <div class="card-header bg-white py-3">
+                                <h5 class="mb-0 fw-bold">My Profile Settings</h5>
                             </div>
-
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">User ID / Student ID</label>
-                                    <input type="text" class="form-control bg-light" value="<?= $display_id ?>" readonly>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">Role</label>
-                                    <input type="text" class="form-control bg-light" value="<?= $user['userRole'] ?>" readonly>
-                                </div>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Full Name</label>
-                                <input type="text" name="userName" class="form-control" value="<?= htmlspecialchars($user['userName']) ?>" required>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Email Address</label>
-                                <input type="email" name="userEmail" class="form-control" value="<?= htmlspecialchars($user['userEmail']) ?>" required>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Phone Number</label>
-                                <input type="text" name="userPhoneNumber" class="form-control" value="<?= htmlspecialchars($user['userPhoneNumber'] ?? '') ?>" placeholder="e.g. 012-3456789">
-                            </div>
-
-                            <div class="mb-4">
-                                <label class="form-label">New Password (leave blank to keep current)</label>
-                                <input type="password" name="new_password" class="form-control" placeholder="Enter new password">
-                            </div>
-
-                            <!-- Club Membership Section -->
-                            <div class="mb-4">
-                                <label class="form-label fw-bold border-bottom w-100 pb-1">Club Memberships</label>
-                                <?php if (count($memberships) > 0): ?>
-                                    <ul class="list-group list-group-flush">
-                                        <?php foreach ($memberships as $m): ?>
-                                            <li class="list-group-item d-flex justify-content-between align-items-center px-0">
-                                                <div>
-                                                    <span class="fw-bold"><?= htmlspecialchars($m['clubName']) ?></span>
-                                                    <div class="small text-muted">Role: <?= htmlspecialchars($m['membershipRole'] ?? 'Member') ?></div>
-                                                </div>
-                                                <span class="badge bg-success rounded-pill">Joined <?= date('M Y', strtotime($m['joinDate'])) ?></span>
-                                            </li>
-                                        <?php endforeach; ?>
-                                    </ul>
-                                <?php else: ?>
-                                    <p class="small text-muted mb-0">No active club memberships found.</p>
+                            <div class="card-body p-4">
+                                <?php if ($message): ?>
+                                    <div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
                                 <?php endif; ?>
-                            </div>
 
-                            <div class="d-grid gap-2">
-                                <button type="submit" class="btn btn-primary fw-bold">Update Profile</button>
+                                <form action="profile.php" method="POST" enctype="multipart/form-data">
+                                    <div class="row">
+                                        <div class="col-md-4 text-center mb-4">
+                                            <div class="mb-3">
+                                                <?php if (!empty($user['userProfilePic'])): ?>
+                                                    <img src="<?php echo $user['userProfilePic']; ?>" alt="Profile"
+                                                        class="img-thumbnail rounded-circle shadow-sm"
+                                                        style="width: 150px; height: 150px; object-fit: cover;">
+                                                <?php else: ?>
+                                                    <div class="bg-light rounded-circle d-inline-flex align-items-center justify-content-center border shadow-sm"
+                                                        style="width: 150px; height: 150px;">
+                                                        <i class="bi bi-person text-secondary display-1"></i>
+                                                    </div>
+                                                <?php endif; ?>
+                                            </div>
+                                            <input type="file" name="profile_pic" class="form-control form-control-sm">
+                                            <small class="text-muted">Upload a new profile picture</small>
+                                        </div>
+                                        <div class="col-md-8">
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold">Login ID
+                                                    (<?php echo ($user['userRole'] === 'Administrator') ? 'Staff ID' : 'Student ID'; ?>)</label>
+                                                <input type="text" class="form-control bg-light"
+                                                    value="<?php echo htmlspecialchars($display_id); ?>" readonly>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold">Full Name</label>
+                                                <input type="text" name="name" class="form-control"
+                                                    value="<?php echo htmlspecialchars($user['userName']); ?>" required>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label fw-bold">Email Address</label>
+                                                <input type="email" name="email" class="form-control"
+                                                    value="<?php echo htmlspecialchars($user['userEmail']); ?>"
+                                                    required>
+                                            </div>
+                                            <div class="mb-4">
+                                                <label class="form-label fw-bold">New Password</label>
+                                                <input type="password" name="new_password" class="form-control"
+                                                    placeholder="Leave blank to keep current password">
+                                            </div>
+
+                                            <!-- Club Memberships Section -->
+                                            <div class="mb-4">
+                                                <label class="form-label fw-bold border-bottom w-100 pb-1">My Club
+                                                    Memberships</label>
+                                                <?php if (count($memberships) > 0): ?>
+                                                    <ul class="list-group list-group-flush">
+                                                        <?php foreach ($memberships as $m): ?>
+                                                            <li
+                                                                class="list-group-item d-flex justify-content-between align-items-center px-0 bg-transparent">
+                                                                <div>
+                                                                    <span
+                                                                        class="fw-bold"><?= htmlspecialchars($m['clubName']) ?></span>
+                                                                    <div class="small text-muted">Role:
+                                                                        <?= htmlspecialchars($m['membershipRole'] ?? 'Member') ?>
+                                                                    </div>
+                                                                </div>
+                                                                <span class="badge bg-success rounded-pill">Joined
+                                                                    <?= date('M Y', strtotime($m['joinDate'])) ?></span>
+                                                            </li>
+                                                        <?php endforeach; ?>
+                                                    </ul>
+                                                <?php else: ?>
+                                                    <p class="small text-muted mb-0">No active club memberships found.</p>
+                                                <?php endif; ?>
+                                            </div>
+
+                                            <div class="d-grid">
+                                                <button type="submit" class="btn btn-primary fw-bold py-2">Save Profile
+                                                    Changes</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </form>
                             </div>
-                        </form>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
+
 </html>

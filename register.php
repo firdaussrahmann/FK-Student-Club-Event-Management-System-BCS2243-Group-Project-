@@ -1,5 +1,4 @@
 <?php
-// register.php
 session_start();
 require_once 'db_connect.php';
 
@@ -9,89 +8,57 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Administrator') {
     exit();
 }
 
-$message = '';
-$messageType = '';
+$message = "";
+$messageType = "";
 
-// Fetch all available clubs for the dropdown
-$clubs_stmt = $pdo->query("SELECT Club_ID, clubName FROM club WHERE clubStatus = 'Active'");
-$clubs = $clubs_stmt->fetchAll();
+// Fetch clubs for the dropdown
+$clubs = $pdo->query("SELECT Club_ID, clubName FROM club WHERE clubStatus = 'Active'")->fetchAll();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $student_id = trim($_POST['student_id']);
-    $name = trim($_POST['name']);
-    $email = trim($_POST['email']);
-    $password = trim($_POST['password']);
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $loginID = $_POST['loginID'];
+    $name = $_POST['name'];
+    $email = $_POST['email'];
+    $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
     $role = $_POST['role'];
+    $club_id = $_POST['club_id'] ?? null;
+    $committee_pos = $_POST['committee_pos'] ?? null;
 
-    // Basic validation
-    if (empty($student_id) || empty($name) || empty($email) || empty($password) || empty($role)) {
-        $message = 'All fields are required.';
-        $messageType = 'danger';
-    } else {
-        // Check if identifier exists in either student or admin tables, and check email in user table
-        $check_sql = "SELECT u.User_ID FROM user u 
-                      LEFT JOIN student s ON u.User_ID = s.User_ID 
-                      LEFT JOIN admin a ON u.User_ID = a.User_ID 
-                      WHERE s.studentID = ? OR a.staffID = ? OR u.userEmail = ?";
-        $stmt = $pdo->prepare($check_sql);
-        $stmt->execute([$student_id, $student_id, $email]);
+    try {
+        $pdo->beginTransaction();
 
-        if ($stmt->rowCount() > 0) {
-            $message = 'A user with this ID or Email already exists.';
-            $messageType = 'danger';
+        // 1. Insert into user table
+        $stmt = $pdo->prepare("INSERT INTO user (userName, userPassword, userEmail, userRole) VALUES (?, ?, ?, ?)");
+        $stmt->execute([$name, $password, $email, $role]);
+        $user_id = $pdo->lastInsertId();
+
+        // 2. Insert into specialization tables
+        if ($role === 'Administrator') {
+            $stmt = $pdo->prepare("INSERT INTO admin (User_ID, staffID) VALUES (?, ?)");
+            $stmt->execute([$user_id, $loginID]);
         } else {
-            // Hash the password securely
-            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $pdo->prepare("INSERT INTO student (User_ID, studentID) VALUES (?, ?)");
+            $stmt->execute([$user_id, $loginID]);
 
-            try {
-                $pdo->beginTransaction();
+            // 3. If Committee, also update the role name and join club
+            if (strpos($role, 'Committee') !== false && !empty($club_id)) {
+                $final_role = "Committee (" . $committee_pos . ")";
+                $pdo->prepare("UPDATE user SET userRole = ? WHERE User_ID = ?")->execute([$final_role, $user_id]);
 
-                // 1. Insert into the base 'user' table
-                $user_sql = "INSERT INTO user (userName, userEmail, userPassword, userRole, userStatus) VALUES (?, ?, ?, ?, 'Active')";
-                $user_stmt = $pdo->prepare($user_sql);
-                $user_stmt->execute([$name, $email, $hashed_password, $role]);
-
-                $new_user_id = $pdo->lastInsertId();
-
-                // 2. Insert into the specific subtype table based on role
-                if ($role === 'Administrator') {
-                    $admin_sql = "INSERT INTO admin (User_ID, staffID) VALUES (?, ?)";
-                    $admin_stmt = $pdo->prepare($admin_sql);
-                    $admin_stmt->execute([$new_user_id, $student_id]);
-                } else {
-                    // Handle Committee position and Club Membership
-                    if ($role === 'Committee' && isset($_POST['committee_position']) && isset($_POST['club_id'])) {
-                        $position = $_POST['committee_position'];
-                        $club_id = $_POST['club_id'];
-                        
-                        // Update user role with position
-                        $update_role_sql = "UPDATE user SET userRole = ? WHERE User_ID = ?";
-                        $pdo->prepare($update_role_sql)->execute(["Committee ($position)", $new_user_id]);
-                        
-                        // Create initial Club Membership
-                        $membership_sql = "INSERT INTO club_membership (joinDate, membershipStatus, membershipRole, User_ID, Club_ID) VALUES (CURDATE(), 'Active', ?, ?, ?)";
-                        $pdo->prepare($membership_sql)->execute([$position, $new_user_id, $club_id]);
-                    }
-
-                    // Default to student for Committee and Student roles
-                    $student_sql = "INSERT INTO student (User_ID, studentID, totalPoints) VALUES (?, ?, 0)";
-                    $student_stmt = $pdo->prepare($student_sql);
-                    $student_stmt->execute([$new_user_id, $student_id]);
-                }
-
-                $pdo->commit();
-                $message = 'User registered successfully!';
-                $messageType = 'success';
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                $message = 'Error registering user: ' . $e->getMessage();
-                $messageType = 'danger';
+                $stmt = $pdo->prepare("INSERT INTO club_membership (Club_ID, User_ID, membershipRole, joinDate, membershipStatus) VALUES (?, ?, ?, CURDATE(), 'Active')");
+                $stmt->execute([$club_id, $user_id, $committee_pos]);
             }
         }
+
+        $pdo->commit();
+        $message = "User registered successfully!";
+        $messageType = "success";
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        $message = "Registration failed: " . $e->getMessage();
+        $messageType = "danger";
     }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 
@@ -100,104 +67,113 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Register User - FK System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script>
+        function toggleCommitteeOptions() {
+            const role = document.getElementById('role').value;
+            const commOptions = document.getElementById('committeeOptions');
+            const loginLabel = document.getElementById('loginLabel');
+
+            if (role === 'Committee') {
+                commOptions.style.display = 'block';
+                loginLabel.innerText = 'Student ID';
+            } else {
+                commOptions.style.display = 'none';
+                loginLabel.innerText = (role === 'Administrator') ? 'Staff ID' : 'Student ID';
+            }
+        }
+    </script>
 </head>
 
-<body class="bg-light">
+<body>
+    <div id="wrapper">
+        <?php include 'sidebar.php'; ?>
 
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
-        <div class="container">
-            <a class="navbar-brand" href="#">FK Admin Panel</a>
-            <div class="d-flex text-white align-items-center">
-                <?php if (isset($_SESSION['name'])): ?>
-                    <span class="me-3">Welcome, <?= htmlspecialchars($_SESSION['name']) ?>
-                        (<?= htmlspecialchars($_SESSION['role']) ?>)</span>
-                    <a href="logout.php" class="btn btn-sm btn-light">Logout</a>
-                <?php endif; ?>
-            </div>
-        </div>
-    </nav>
+        <div id="content">
+            <?php include 'topbar.php'; ?>
+            <div class="container-fluid">
+                <div class="row justify-content-center">
+                    <div class="col-lg-7">
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-white py-3">
+                                <h5 class="mb-0 fw-bold">Register New System User</h5>
+                            </div>
+                            <div class="card-body p-4">
+                                <?php if ($message): ?>
+                                    <div class="alert alert-<?php echo $messageType; ?>"><?php echo $message; ?></div>
+                                <?php endif; ?>
 
-    <div class="container">
-        <div class="row justify-content-center">
-            <div class="col-md-6">
-                <div class="card shadow-sm border-0">
-                    <div class="card-header bg-white border-0 pt-4 pb-0">
-                        <h5 class="card-title fw-bold">Register New User</h5>
-                    </div>
-                    <div class="card-body p-4">
+                                <form method="POST">
+                                    <div class="row">
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label fw-bold" id="loginLabel">Student/Staff ID</label>
+                                            <input type="text" name="loginID" class="form-control"
+                                                placeholder="e.g. CB24001" required>
+                                        </div>
+                                        <div class="col-md-6 mb-3">
+                                            <label class="form-label fw-bold">User Role</label>
+                                            <select name="role" id="role" class="form-select"
+                                                onchange="toggleCommitteeOptions()" required>
+                                                <option value="Student">Student</option>
+                                                <option value="Committee">Committee Member</option>
+                                                <option value="Administrator">Administrator</option>
+                                            </select>
+                                        </div>
+                                    </div>
 
-                        <?php if ($message): ?>
-                            <div class="alert alert-<?= $messageType ?>" role="alert">
-                                <?= htmlspecialchars($message) ?>
-                            </div>
-                        <?php endif; ?>
+                                    <div id="committeeOptions" style="display:none;"
+                                        class="bg-light p-3 rounded mb-3 border">
+                                        <h6 class="fw-bold mb-3"><i class="bi bi-diagram-3 me-2"></i>Committee
+                                            Assignment</h6>
+                                        <div class="row">
+                                            <div class="col-md-6 mb-3">
+                                                <label class="form-label small fw-bold">Assigned Club</label>
+                                                <select name="club_id" class="form-select">
+                                                    <option value="">-- Select Club --</option>
+                                                    <?php foreach ($clubs as $club): ?>
+                                                        <option value="<?= $club['Club_ID'] ?>">
+                                                            <?= htmlspecialchars($club['clubName']) ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6 mb-3">
+                                                <label class="form-label small fw-bold">Committee Position</label>
+                                                <select name="committee_pos" class="form-select">
+                                                    <option value="President">President</option>
+                                                    <option value="Secretary">Secretary</option>
+                                                    <option value="Treasurer">Treasurer</option>
+                                                    <option value="Committee Member">Committee Member</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
 
-                        <form action="register.php" method="POST">
-                            <div class="mb-3">
-                                <label for="student_id" class="form-label">Student ID / Admin ID</label>
-                                <input type="text" class="form-control" id="student_id" name="student_id" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="name" class="form-label">Full Name</label>
-                                <input type="text" class="form-control" id="name" name="name" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="email" class="form-label">Email Address</label>
-                                <input type="email" class="form-control" id="email" name="email" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="password" class="form-label">Temporary Password</label>
-                                <input type="password" class="form-control" id="password" name="password" required>
-                            </div>
-                            <div class="mb-3">
-                                <label for="role" class="form-label">User Role</label>
-                                <select class="form-select" id="role" name="role" required onchange="toggleCommitteeRole()">
-                                    <option value="" disabled selected>Select a role...</option>
-                                    <option value="Administrator">Administrator</option>
-                                    <option value="Committee">Committee Member</option>
-                                    <option value="Student">Student</option>
-                                </select>
-                            </div>
-                            <div class="mb-3" id="committeeRoleDiv" style="display:none;">
-                                <div class="mb-3">
-                                    <label class="form-label">Committee Position</label>
-                                    <select name="committee_position" class="form-select">
-                                        <option value="President">President</option>
-                                        <option value="Secretary">Secretary</option>
-                                        <option value="Treasurer">Treasurer</option>
-                                        <option value="Committee Member">Committee Member</option>
-                                    </select>
-                                </div>
-                                <div class="mb-0">
-                                    <label class="form-label">Assign to Club</label>
-                                    <select name="club_id" class="form-select">
-                                        <option value="" disabled selected>Select a club...</option>
-                                        <?php foreach ($clubs as $c): ?>
-                                            <option value="<?= $c['Club_ID'] ?>"><?= htmlspecialchars($c['clubName']) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                            </div>
-                            <button type="submit" class="btn btn-success w-100 fw-bold">Register User</button>
-                        </form>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-bold">Full Name</label>
+                                        <input type="text" name="name" class="form-control"
+                                            placeholder="Enter full name" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-bold">Email Address</label>
+                                        <input type="email" name="email" class="form-control"
+                                            placeholder="email@example.com" required>
+                                    </div>
+                                    <div class="mb-4">
+                                        <label class="form-label fw-bold">Initial Password</label>
+                                        <input type="password" name="password" class="form-control" required>
+                                    </div>
 
+                                    <div class="d-grid">
+                                        <button type="submit" class="btn btn-primary fw-bold py-2">Create
+                                            Account</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-
-    <script>
-        function toggleCommitteeRole() {
-            var role = document.getElementById('role').value;
-            var div = document.getElementById('committeeRoleDiv');
-            if (role === 'Committee') {
-                div.style.display = 'block';
-            } else {
-                div.style.display = 'none';
-            }
-        }
-    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 
