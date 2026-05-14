@@ -2,8 +2,8 @@
 session_start();
 
 // Security Check: If not logged in or not a Committee member, redirect to login
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Committee') {
-    header("Location: login.php");
+if (!isset($_SESSION['user_id']) || strpos($_SESSION['role'], 'Committee') === false) {
+    header("Location: index.php");
     exit();
 }
 ?>

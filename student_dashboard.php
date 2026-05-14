@@ -3,7 +3,7 @@ session_start();
 
 // Security Check: If not logged in or not a Student, redirect to login
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Student') {
-    header("Location: login.php");
+    header("Location: index.php");
     exit();
 }
 ?>

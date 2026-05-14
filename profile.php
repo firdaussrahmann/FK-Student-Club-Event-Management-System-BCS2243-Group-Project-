@@ -4,7 +4,7 @@ require_once 'db_connect.php';
 
 // Security Check: Must be logged in
 if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
+    header("Location: index.php");
     exit();
 }
 
