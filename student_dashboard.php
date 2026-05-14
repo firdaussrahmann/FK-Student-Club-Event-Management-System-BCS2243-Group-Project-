@@ -37,7 +37,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Student') {
                     join clubs here.</p>
                 <hr>
                 <div class="alert alert-success">
-                    <strong>Student ID:</strong> <?php echo htmlspecialchars($_SESSION['student_id']); ?>
+                    <strong>Student ID:</strong> <?php echo htmlspecialchars($_SESSION['studentID']); ?>
                 </div>
             </div>
         </div>

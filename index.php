@@ -27,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             LEFT JOIN student s ON u.User_ID = s.User_ID
             LEFT JOIN admin a ON u.User_ID = a.User_ID
             WHERE s.studentID = ? OR a.staffID = ?";
-    
+
     $stmt = $pdo->prepare($sql);
     $stmt->execute([$login_id, $login_id]);
     $user = $stmt->fetch();
@@ -37,6 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $_SESSION['user_id'] = $user['User_ID'];
         $_SESSION['name'] = $user['name'];
         $_SESSION['role'] = $user['userRole'];
+        $_SESSION['studentID'] = ($user['userRole'] === 'Administrator') ? $user['staffID'] : $user['studentID'];
 
         // Role-based redirection
         if ($user['userRole'] === 'Administrator') {
@@ -54,6 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -67,14 +69,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             align-items: center;
             justify-content: center;
         }
+
         .login-card {
             border: none;
             border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
             overflow: hidden;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="row justify-content-center">
